@@ -103,12 +103,11 @@ function Wipe-Folder([string]$path) {
     if (-not (Test-Path -LiteralPath $path)) { return }
     if (-not (Remove-Links $path)) { return }
     try {
-        & takeown.exe /F $path /R /D Y 2>&1 | Out-Null
-        & icacls.exe $path /reset /T /C 2>&1 | Out-Null
-        & icacls.exe $path /grant '*S-1-5-32-544:(OI)(CI)F' /T /C 2>&1 | Out-Null
+        # No takeown /R or icacls /reset here: Protect-HrTree already gave Administrators every item, and /reset would open the folder again
+        # to ordinary users (inheritance from C:\) before the deletion. /XJ: robocopy never follows a junction.
         $emptyDir = Join-Path $env:TEMP 'hrsystem-empty'
         New-Item -ItemType Directory -Force -Path $emptyDir | Out-Null
-        & robocopy.exe $emptyDir $path /MIR /R:0 /W:0 /NFL /NDL /NJH /NJS 2>&1 | Out-Null
+        & robocopy.exe $emptyDir $path /MIR /XJ /R:0 /W:0 /NFL /NDL /NJH /NJS 2>&1 | Out-Null
     } catch { }
     Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction SilentlyContinue
 }
@@ -244,12 +243,9 @@ for (`$i = 0; `$i -lt 15; `$i++) {
     } catch {}
     if (-not `$wipe) { break }
     if (Test-Path -LiteralPath '$installRoot') {
-        & takeown.exe /F '$installRoot' /R /D Y 2>&1 | Out-Null
-        & icacls.exe '$installRoot' /reset /T /C 2>&1 | Out-Null
-        & icacls.exe '$installRoot' /grant '*S-1-5-32-544:(OI)(CI)F' /T /C 2>&1 | Out-Null
         `$empty = Join-Path `$env:TEMP 'hrsystem-empty'
         New-Item -ItemType Directory -Force -Path `$empty | Out-Null
-        & robocopy.exe `$empty '$installRoot' /MIR /R:0 /W:0 /NFL /NDL /NJH /NJS 2>&1 | Out-Null
+        & robocopy.exe `$empty '$installRoot' /MIR /XJ /R:0 /W:0 /NFL /NDL /NJH /NJS 2>&1 | Out-Null
     }
     Remove-Item -LiteralPath '$installRoot' -Recurse -Force -ErrorAction SilentlyContinue
     if (-not (Test-Path -LiteralPath '$installRoot')) { break }

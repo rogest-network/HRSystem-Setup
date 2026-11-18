@@ -77,8 +77,16 @@ function Remove-HrLinks([string]$Path, [switch]$KeepHardLinks) {
   $queue.Enqueue($Path)
   while ($queue.Count -gt 0) {
     $dir = $queue.Dequeue()
-    try { $items = (New-Object IO.DirectoryInfo($dir)).GetFileSystemInfos() } catch { $found += "$dir (NUK U HOQ: dosja nuk u lexua)"; continue }
+    $di = New-Object IO.DirectoryInfo($dir)
+    $items = $null
+    # A folder Administrators cannot read may hide a link: taken over (that folder only) and read again.
+    try { $items = $di.GetFileSystemInfos() } catch { Grant-HrAdminAccess $dir; try { $items = $di.GetFileSystemInfos() } catch { $found += "$dir (NUK U HOQ: dosja nuk u lexua)"; continue } }
     foreach ($it in $items) {
+      # A file whose number of names cannot be read may be a hard link: never taken over (takeown would change the owner of the linked file
+      # outside), only reported. Reading it needs only the right to list the folder, which Administrators have here, so this should not happen.
+      if (-not ($it -is [IO.DirectoryInfo]) -and -not (Test-HrLink $it) -and [HrLinkInfo]::Links($it.FullName) -lt 0) {
+        $found += "$($it.FullName) (NUK U HOQ: skedari nuk u kontrollua)"; continue
+      }
       $note = Remove-HrLinkItem $it -KeepHardLinks:$KeepHardLinks
       if ($note) { $found += $note } elseif ($it -is [IO.DirectoryInfo]) { $queue.Enqueue($it.FullName) }
     }
@@ -137,10 +145,11 @@ function Protect-HrTree([string]$Path, [string]$OwnerSid = '', [switch]$UsersTop
   $top = New-Object IO.DirectoryInfo($Path)
   if (Test-HrLink $top) { $res.Ok = $false; $res.Notes.Add("$Path (NUK U MBYLL: dosja vete eshte lidhje drejt nje vendi tjeter)"); return $res }
 
-  # 1. links already inside (failures here are looked at again in step 3, after a takeover)
+  # 1. links already inside. ANY failure here (a link that could not be removed, a kept hard link, a folder or file that could not be checked even
+  # after a takeover) stops everything: step 2 spreads the top folder's entries through whatever is left. Nothing is changed in that case.
   foreach ($n in @(Remove-HrLinks $Path -KeepHardLinks:$KeepHardLinks)) {
-    if ($n -notlike '*(NUK U HOQ*') { $res.Notes.Add($n) }
-    elseif ($n -like '*hard link*') { $res.Ok = $false; $res.Notes.Add($n) }   # kept hard link: stop before anything spreads through it
+    $res.Notes.Add($n)
+    if ($n -like '*(NUK U HOQ*') { $res.Ok = $false }
   }
   if (-not $res.Ok) { return $res }
 
@@ -181,10 +190,8 @@ function Protect-HrTree([string]$Path, [string]$OwnerSid = '', [switch]$UsersTop
       if ($note) { $res.Notes.Add($note); if ($note -like '*(NUK U HOQ*') { $res.Ok = $false }; continue }
       $isDir = $it -is [IO.DirectoryInfo]
       if (-not $isDir -and [HrLinkInfo]::Links($it.FullName) -lt 0) {
-        Grant-HrAdminAccess $it.FullName
-        if ([HrLinkInfo]::Links($it.FullName) -lt 0) { $res.Ok = $false; $res.Notes.Add("$($it.FullName) (NUK U KONTROLLUA)"); continue }
-        $note = Remove-HrLinkItem $it -KeepHardLinks:$KeepHardLinks
-        if ($note) { $res.Notes.Add($note); if ($note -like '*(NUK U HOQ*') { $res.Ok = $false }; continue }
+        # never taken over: it may be a hard link and takeown would change the linked file outside
+        $res.Ok = $false; $res.Notes.Add("$($it.FullName) (NUK U KONTROLLUA)"); continue
       }
       $usersRead = (-not $isDir) -and ($dir -eq $Path) -and ($UsersFiles -contains $it.Name)
       $err = Set-HrItemSecurity $it $OwnerSid -UsersRead:$usersRead
