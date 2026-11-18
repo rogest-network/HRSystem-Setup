@@ -82,12 +82,20 @@ function Read-KeyFileValue([string]$Path, [string]$Key) {
 
 # At the START: give this administrator and SYSTEM full control of the folder and everything an earlier (or failed) install left in it,
 # and clear read-only flags. Only adds rights, never fails the install, so installing again over an old installation always works.
-function Unlock-Folder([string]$Path) {
+# Since 2026-11-19 without takeown /R and icacls /T, which follow links an ordinary user may have planted in an old, still open folder: Protect-HrTree
+# (hr-links.ps1) removes the links, closes the folder to ordinary users and takes over, item by item, whatever Administrators could not open.
+# Returns $true only when the folder was closed completely (then no link is left and ordinary users cannot add one, so recursive tools are safe).
+function Unlock-Folder([string]$Path, [switch]$KeepHardLinks) {
+    $ok = $false
     try {
-        & takeown.exe /F $Path /R /D Y 2>&1 | Out-Null
-        & icacls.exe $Path /grant '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-18:(OI)(CI)F' /T /C 2>&1 | Out-Null
-        & attrib.exe -r (Join-Path $Path '*') /s /d 2>&1 | Out-Null
+        if (Get-Command Protect-HrTree -ErrorAction SilentlyContinue) {
+            $r = Protect-HrTree -Path $Path -OwnerSid ([Security.Principal.WindowsIdentity]::GetCurrent().User.Value) -KeepHardLinks:$KeepHardLinks
+            foreach ($n in $r.Notes) { Write-Host "  $n" -ForegroundColor DarkYellow }
+            $ok = $r.Ok
+        }
+        if ($ok) { & attrib.exe -r (Join-Path $Path '*') /s /d 2>&1 | Out-Null }   # only once no link is left
     } catch { }
+    return $ok
 }
 # At the END (all files are written) the install and data folders are closed with Lock-HrFolders (hr-common.ps1).
 
@@ -107,7 +115,9 @@ function Protect-Folder([string]$Path) {
 }
 
 New-Item -ItemType Directory -Force -Path $installRoot | Out-Null
-Unlock-Folder $installRoot
+[void](Unlock-Folder $installRoot)
+# The old MySQL data below is cleaned with takeown /R and icacls /T further down: only when this closed the data folder completely.
+$dataSafe = (-not (Test-Path -LiteralPath $dataRoot)) -or (Unlock-Folder $dataRoot -KeepHardLinks)
 # Work from the install folder, not from the folder the zip was extracted to: every process started below (the application, the
 # dashboard, Notepad) inherits the working folder, and a folder that is some process's working folder cannot be deleted afterwards.
 Set-Location $installRoot
@@ -260,6 +270,8 @@ try {
         # Cleanup stale data if possible. If Windows still locks it, use a fresh data folder instead of failing.
         if (Test-Path $mysqlData) {
             try {
+                # A data folder that could not be closed completely may hold a link these recursive tools would follow: a fresh folder instead.
+                if (-not $dataSafe) { throw 'dosja e te dhenave nuk u mbyll plotesisht' }
                 & takeown.exe /F $mysqlData /R /D Y | Out-Null
                 & icacls.exe $mysqlData /inheritance:e /grant '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' /T /C | Out-Null
                 Remove-Item $mysqlData -Recurse -Force -ErrorAction Stop

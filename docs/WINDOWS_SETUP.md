@@ -97,11 +97,16 @@ user of a shared PC could change its scripts and run code as SYSTEM. At the end 
 | Every other user of the PC | only the list of the top folder and `Dashboard.bat` (the Public-desktop shortcut); no logs, no `dashboard.key` | nothing (database files and backups) |
 
 `.env`, `HRSystem-Keys.txt`, `github.token` and `tools\phpmyadmin-data` keep their own closed permissions (SYSTEM + Administrators).
-Links inside the folders (junctions, symbolic links and hard links: `Remove-HrLinks` in `installer/hr-links.ps1`) are removed first, only the
-link, because `icacls /T`, `takeown /R`, `robocopy /MIR` and `Remove-Item -Recurse` follow them out of the folder, and closing the top folder
-spreads its entries through a hard link to the linked file (seen in a test). Order: links out, top folder closed, links out again, then the
-recursive steps (skipped when a link could not be removed). The uninstall does the same and leaves the folder for the owner when a link stays.
-Everything is owned by Administrators afterwards (icacls /C exits 0 even when files fail: the result is read back).
+How (`Protect-HrTree` in `installer/hr-links.ps1`; no `icacls /T`, `takeown /R` or `robocopy /MIR` on these folders any more, because they
+follow junctions, symbolic links and hard links out of the folder): 1. every link inside is removed (only the link); 2. the top folder gets its
+exact permissions; 3. one walk, top down, that never enters a link: each folder is closed (owner, explicit entries of anyone else removed)
+before it is read, links found are removed, files are closed, and an item Administrators cannot open is taken over by itself (`takeown /A`
+on that item only). A finished lock writes `.hr-locked` in the folder; a lock with any problem prints GABIM in red and writes nothing, so the
+next run tries again. The setup does the same at its START on an old folder (`Unlock-Folder`), and the uninstall before it deletes anything
+(a folder it cannot close completely is left for the owner; `Uninstall.bat` copies `hr-links.ps1` to TEMP next to the uninstall script).
+Deny entries are removed (HRSystem sets none). In the data folder a hard-linked file (maybe a database file) is reported and nothing is
+changed; the setup then uses a fresh MySQL data folder instead of cleaning the old one with recursive tools. Residual: a link planted in the few milliseconds between steps 1 and 2, or in a
+folder that still had an ordinary user's own explicit entry before the walk reached it, can receive the top folder's inherited entries.
 `updater.ps1` repeats the lock when it is missing, but an installed updater is never replaced by an update, so an install made with a setup
 older than 2026-11-18 is closed only by running the new setup again over it. A second Windows account of the owner is not given Modify: he
 uses the installing account or opens things as Administrator. `Dashboard.bat` falls back to `http://127.0.0.1:3500` when it cannot read

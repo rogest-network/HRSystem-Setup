@@ -78,22 +78,23 @@ function Save-Keys {
     return $dest
 }
 
-# Links inside a folder (junctions, symbolic and hard links) are removed before takeown /R, icacls /T, robocopy /MIR and Remove-Item -Recurse:
-# they follow them, so a link an ordinary user planted (to C:\Windows\System32, say) would make this elevated uninstall change or delete files
-# outside HRSystem (security review 2026-11-18/19; Remove-HrLinks in hr-links.ps1, next to this script). Returns $true when it is safe to go on;
-# $false leaves the folder for the owner to delete by hand (a link that could not be removed, a folder itself a link, or hr-links.ps1 missing).
+# Before takeown /R, icacls /T, robocopy /MIR and Remove-Item -Recurse (they follow junctions, symbolic and hard links, so a link an ordinary user
+# planted, to C:\Windows\System32 say, would make this elevated uninstall change or delete files outside HRSystem) the folder is closed with
+# Protect-HrTree (hr-links.ps1, next to this script): links removed, no write left for ordinary users anywhere inside, so nothing new can be
+# planted while the deletion runs (security review 2026-11-18/19). Returns $true when it is safe to go on; $false leaves the folder for the owner
+# to delete by hand (a link or item that could not be handled, a folder itself a link, or hr-links.ps1 missing).
 $linksScript = Join-Path $PSScriptRoot 'hr-links.ps1'
 if (Test-Path -LiteralPath $linksScript) { . $linksScript }
-function Remove-Links([string]$path) {
+function Remove-Links([string]$path, [switch]$KeepHardLinks) {
     if (-not (Test-Path -LiteralPath $path)) { return $true }
     if ((Get-Item -LiteralPath $path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) {
         try { [IO.Directory]::Delete($path, $false); Write-Host "U hoq lidhja: $path" -ForegroundColor Yellow } catch { }
         return $false   # the folder itself was a link: nothing of the target is touched
     }
-    if (-not (Get-Command Remove-HrLinks -ErrorAction SilentlyContinue)) { Write-Host "Mungon hr-links.ps1: $path nuk fshihet automatikisht, fshije me dore." -ForegroundColor Yellow; return $false }
-    $found = @(Remove-HrLinks $path)
-    foreach ($l in $found) { Write-Host "Lidhje: $l" -ForegroundColor Yellow }
-    if ($found | Where-Object { $_ -like '*(NUK U HOQ*' }) { Write-Host "$path nuk fshihet automatikisht (nje lidhje mbeti): fshije me dore." -ForegroundColor Yellow; return $false }
+    if (-not (Get-Command Protect-HrTree -ErrorAction SilentlyContinue)) { Write-Host "Mungon hr-links.ps1: $path nuk fshihet automatikisht, fshije me dore." -ForegroundColor Yellow; return $false }
+    $r = Protect-HrTree -Path $path -OwnerSid ([Security.Principal.WindowsIdentity]::GetCurrent().User.Value) -KeepHardLinks:$KeepHardLinks
+    foreach ($n in $r.Notes) { Write-Host "  $n" -ForegroundColor Yellow }
+    if (-not $r.Ok) { Write-Host "$path nuk fshihet automatikisht (shiko rreshtat me larte): fshije me dore." -ForegroundColor Yellow; return $false }
     return $true
 }
 
