@@ -139,7 +139,7 @@ switch ($Action) {
     $root = Root-Of $Name
     New-Item -ItemType Directory -Force -Path (Join-Path $root 'releases\0.0.0') | Out-Null
     Set-Content (Join-Path $root 'current.txt') '0.0.0' -NoNewline
-    foreach ($f in 'hr-common.ps1', 'updater.ps1') { Copy-Item (Join-Path $here $f) (Join-Path $root $f) -Force }
+    foreach ($f in 'hr-common.ps1', 'hr-links.ps1', 'updater.ps1') { Copy-Item (Join-Path $here $f) (Join-Path $root $f) -Force }
     Set-Content (Join-Path $root 'update.json') (ConvertTo-Json @{ repo = $Repo; channel = $Channel }) -Encoding ascii
     Invoke-Sql "CREATE DATABASE IF NOT EXISTS ``hrtest_$Name`` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
     Invoke-Sql "CREATE USER IF NOT EXISTS 'hrtest_$Name'@'127.0.0.1' IDENTIFIED BY '$($c.dbPassword)'"
@@ -180,7 +180,7 @@ switch ($Action) {
     Start-TestDb
     foreach ($c in (Pick $Name)) {
       Say "== $($c.name) ==" Cyan
-      foreach ($f in 'hr-common.ps1', 'updater.ps1') { Copy-Item (Join-Path $here $f) (Join-Path (Root-Of $c.name) $f) -Force }
+      foreach ($f in 'hr-common.ps1', 'hr-links.ps1', 'updater.ps1') { Copy-Item (Join-Path $here $f) (Join-Path (Root-Of $c.name) $f) -Force }
       if ((Install-Company $c) -ne 0) { Say "$($c.name): perditesimi deshtoi." Red }
     }
   }

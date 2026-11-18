@@ -89,12 +89,7 @@ function Unlock-Folder([string]$Path) {
         & attrib.exe -r (Join-Path $Path '*') /s /d 2>&1 | Out-Null
     } catch { }
 }
-# At the END (all files are written): no inheritance from C:\ (where ordinary users can write): the scripts in these folders run as
-# SYSTEM. Best effort: a failure here is only a warning, never a failed install.
-function Lock-Folder([string]$Path) {
-    # The owner too becomes Administrators, so nothing left in the folder by an ordinary user can be changed by that user afterwards.
-    try { & icacls.exe $Path /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' /T /C 2>&1 | Out-Null; & icacls.exe $Path /setowner '*S-1-5-32-544' /T /C 2>&1 | Out-Null } catch { Write-Host "Leje te folderit $Path nuk u vendosen (kjo nuk e prish instalimin)." -ForegroundColor DarkYellow }
-}
+# At the END (all files are written) the install and data folders are closed with Lock-HrFolders (hr-common.ps1).
 
 # The files with passwords and secrets (.env, the key file): only SYSTEM (the application and its tasks) and Administrators (setup, updater, dashboard) may
 # read them; nobody else on this PC. Best effort: a failure is only a warning, never a failed install.
@@ -486,7 +481,7 @@ try {
     )
     Set-Content -Path $launcher -Value ($launcherLines -join [Environment]::NewLine) -Encoding utf8
 
-    foreach ($f in @('hr-common.ps1', 'updater.ps1', 'update.bat', 'sql-import.ps1', 'sql-import.bat', 'uninstall.ps1', 'uninstall-wizard.ps1', 'LEXO-ME-PARE.txt')) {
+    foreach ($f in @('hr-common.ps1', 'hr-links.ps1', 'updater.ps1', 'update.bat', 'sql-import.ps1', 'sql-import.bat', 'uninstall.ps1', 'uninstall-wizard.ps1', 'LEXO-ME-PARE.txt')) {
         if (Test-Path (Join-Path $sourceRoot $f)) { Copy-Item (Join-Path $sourceRoot $f) (Join-Path $installRoot $f) -Force }
     }
     # The zip shows only Install.bat, Uninstall.bat and Dashboard.bat (the rest is in its files folder); the last two are kept here too.
@@ -670,8 +665,13 @@ try {
         } catch { Warn "Tokeni u ruajt, por GitHub nuk u pergjigj ($($_.Exception.Message)). Kontrollo tokenin dhe te drejtat." }
     }
 
-    # No folder or file is locked (owner, 2026-10-21: protection was not wanted and caused "access denied" everywhere). Only the files and the
-    # one folder that hold passwords are closed: .env, the key file (Protect-File) and tools\phpmyadmin-data (Protect-Folder).
+    # The files and the one folder that hold passwords are closed: .env, the key file (Protect-File) and tools\phpmyadmin-data (Protect-Folder).
+    # The install and data folders: no write for ordinary users of the PC (the app runs from here as SYSTEM), the owner's own account keeps
+    # Modify so nothing says "access denied" to him (owner, 2026-10-21, why the old full lock was dropped). Lock-HrFolders in hr-common.ps1.
+    Banner 'Lejet e folderave'
+    $meId = [Security.Principal.WindowsIdentity]::GetCurrent()
+    Lock-HrFolders -Root $installRoot -Data $dataRoot -OwnerSid $meId.User.Value -Force
+    Write-Host "Qasje e plote pa pyetje ka vetem llogaria $($meId.Name) (dhe administratoret kur hapen si Administrator); perdoruesit e tjere te ketij kompjuteri nuk mund te ndryshojne asgje ketu." -ForegroundColor DarkGray
 
     # ---- The database tools: PHP + phpMyAdmin (the dashboard's "Hap databazen"), ready before the owner's first click (owner, 2026-11-12) ----
     # The dashboard downloads and installs them itself (the only downloader); here the setup waits for it and checks php.exe. Never a failed

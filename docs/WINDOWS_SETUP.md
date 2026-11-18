@@ -85,6 +85,28 @@ All of them open as Administrator and end with **SUKSES** or **GABIM** (details 
 (as SYSTEM); the launcher starts the release named in `current.txt` and starts it again if it stops. MySQL is the service
 `HRSystemMySQL` (a free port from 3307). `github.token` is encrypted with Windows DPAPI (this machine) and readable by administrators only.
 
+## Folder permissions (security review, 2026-11-18)
+A folder made under `C:\` inherits "Authenticated Users: Modify", and the app runs from `C:\HRSystem` as SYSTEM, so before this any ordinary
+user of a shared PC could change its scripts and run code as SYSTEM. At the end of the setup (stage "Lejet e folderave") `Lock-HrFolders`
+(`installer/hr-common.ps1`) closes both folders:
+
+| Who | `C:\HRSystem` | `C:\HRSystemData` |
+|---|---|---|
+| SYSTEM (the app, MySQL), Administrators (elevated: dashboard, updater, uninstall) | Full | Full |
+| The account that ran the setup (the owner; the dashboard task runs as him) | Modify: Explorer, Notepad and the dashboard's open-folder buttons work with no "access denied" | Modify |
+| Every other user of the PC | only the list of the top folder and `Dashboard.bat` (the Public-desktop shortcut); no logs, no `dashboard.key` | nothing (database files and backups) |
+
+`.env`, `HRSystem-Keys.txt`, `github.token` and `tools\phpmyadmin-data` keep their own closed permissions (SYSTEM + Administrators).
+Links inside the folders (junctions, symbolic links and hard links: `Remove-HrLinks` in `installer/hr-links.ps1`) are removed first, only the
+link, because `icacls /T`, `takeown /R`, `robocopy /MIR` and `Remove-Item -Recurse` follow them out of the folder, and closing the top folder
+spreads its entries through a hard link to the linked file (seen in a test). Order: links out, top folder closed, links out again, then the
+recursive steps (skipped when a link could not be removed). The uninstall does the same and leaves the folder for the owner when a link stays.
+Everything is owned by Administrators afterwards (icacls /C exits 0 even when files fail: the result is read back).
+`updater.ps1` repeats the lock when it is missing, but an installed updater is never replaced by an update, so an install made with a setup
+older than 2026-11-18 is closed only by running the new setup again over it. A second Windows account of the owner is not given Modify: he
+uses the installing account or opens things as Administrator. `Dashboard.bat` falls back to `http://127.0.0.1:3500` when it cannot read
+`dashboard-url.txt`, and never starts itself again from the same folder.
+
 ## Database tools: Visual C++ runtime, PHP, phpMyAdmin (owner, 2026-11-12: "installin me e pas PHP krejt mirë në rregull")
 The dashboard's button "Hap databazën (phpMyAdmin)" needs PHP for Windows and phpMyAdmin in `<install>\tools\{php, phpmyadmin, phpmyadmin-data}`.
 **The dashboard is the only downloader** (`pmaInstall` / `pmaEnsure` in `manager/server.mjs`, both downloads SHA-256 checked; 30 s after it starts and

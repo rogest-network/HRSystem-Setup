@@ -24,7 +24,7 @@ FOLDERS = ['migrations', 'public', 'server', 'src']
 INSTALLER_DIR = os.path.join(SETUP, 'installer')
 # The setup zip shows only three files (owner, 2026-10-21): Install, Uninstall, Dashboard; everything else is in its files/ folder.
 ROOT_BATS = ['Install.bat', 'Uninstall.bat', 'Dashboard.bat']
-INSTALLER = ['installer.ps1', 'wizard.ps1', 'hr-common.ps1', 'updater.ps1', 'update.bat', 'sql-import.ps1', 'sql-import.bat', 'uninstall.ps1',
+INSTALLER = ['installer.ps1', 'wizard.ps1', 'hr-common.ps1', 'hr-links.ps1', 'updater.ps1', 'update.bat', 'sql-import.ps1', 'sql-import.bat', 'uninstall.ps1',
              'uninstall-wizard.ps1', 'LEXO-ME-PARE.txt']
 
 

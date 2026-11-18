@@ -25,6 +25,84 @@ function Is-Admin {
   return (New-Object Security.Principal.WindowsPrincipal($id)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
+# ---- Folder permissions (security review, 2026-11-18) ----
+# The application runs as SYSTEM (task HRSystem -> start-hrsystem.ps1 -> node releases\<v>\server.mjs) and the dashboard elevated, both from the
+# install folder. A folder made under C:\ inherits "Authenticated Users: Modify", so any ordinary user of a shared PC could change those files and
+# run code as SYSTEM. Lock-HrFolders closes that: no inheritance from C:\; SYSTEM and Administrators full control; the owner's own account (the
+# administrator who installed = the user of the dashboard task) Modify, so Explorer, Notepad and the dashboard's "Hap" buttons keep working for him
+# without "access denied" (owner, 2026-10-21: an earlier lock that denied even him was removed); every other user of the PC may only list the top
+# of the install folder and start Dashboard.bat (the Public-desktop shortcut): no logs, no dashboard.key, nothing of the data folder (the database
+# files and the backups hold every employee's data). .env, the key file, github.token and tools\phpmyadmin-data keep their own closed permissions
+# (no inheritance, so this does not open them). Another Windows account of the owner gets no Modify: he uses the installing account or elevation.
+# Best effort: a failure is a warning only. NOTE: the installed updater.ps1/hr-common.ps1 are never replaced by an update, so an install made
+# before this change is locked only by running the new setup again (or a later dashboard step, on the owner's word).
+
+# Links inside the folders (junctions, symbolic and hard links) are removed before any recursive step: Remove-HrLinks in hr-links.ps1 (copied
+# next to this file by the setup, pack.py and test-env.ps1). Without it the lock still closes the top folders but skips every recursive step.
+$hrLinksScript = Join-Path $PSScriptRoot 'hr-links.ps1'
+if (Test-Path -LiteralPath $hrLinksScript) { . $hrLinksScript }
+function Get-HrOwnerSid {
+  # The account of the dashboard task (the administrator who installed), else the account running this script when it is not SYSTEM.
+  try {
+    $t = Get-ScheduledTask -TaskName "$($script:TaskName)-Dashboard" -ErrorAction Stop
+    $u = [string]$t.Principal.UserId
+    if ($u) { return ([Security.Principal.NTAccount]$u).Translate([Security.Principal.SecurityIdentifier]).Value }
+  } catch { }
+  $me = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+  if ($me -ne 'S-1-5-18') { return $me }
+  return $null
+}
+function Lock-HrFolders([string]$Root = $script:Root, [string]$Data = $script:DataRoot, [string]$OwnerSid = '', [switch]$Force) {
+  # Everyone, Authenticated Users, Users, INTERACTIVE, CREATOR OWNER, Guests: their explicit entries anywhere below are removed (inherited ones go
+  # when the top folder stops inheriting from C:\).
+  $broad = @('*S-1-1-0', '*S-1-5-11', '*S-1-5-32-545', '*S-1-5-4', '*S-1-3-0', '*S-1-5-32-546')
+  # PowerShell 5.1 with 'Stop' turns any icacls stderr line (one file it could not change) into an error that would skip the remaining steps;
+  # the exit code of the step that matters is checked instead.
+  $ErrorActionPreference = 'Continue'
+  $owner = if ($OwnerSid) { $OwnerSid } else { Get-HrOwnerSid }   # the installer passes its own account: no name lookup
+  $sidType = [Security.Principal.SecurityIdentifier]
+  foreach ($p in @($Root, $Data)) {
+    if (-not $p -or -not (Test-Path -LiteralPath $p)) { continue }
+    try {
+      $acl = Get-Acl -LiteralPath $p
+      $hasOwnerRule = (-not $owner) -or [bool]($acl.GetAccessRules($true, $false, $sidType) | Where-Object { $_.IdentityReference.Value -eq $owner })
+      $ownedByAdmins = $acl.GetOwner($sidType).Value -eq 'S-1-5-32-544'
+      # Done before = closed, the owner's entry there, owned by Administrators (the updater calls this on every run; a half-done lock is finished).
+      if (-not $Force -and $acl.AreAccessRulesProtected -and $hasOwnerRule -and $ownedByAdmins) { continue }
+      if ((Get-Item -LiteralPath $p -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'dosja vete eshte lidhje (junction) drejt nje vendi tjeter: nuk preket' }
+      Write-Host "Po mbyllen lejet e $p (heren e pare mund te zgjase disa minuta)..."
+      # 1. Links out (the next step spreads the top folder's entries to every file below, and through a hard link that reaches the linked
+      # file outside: seen in the sandbox test); 2. the top folder closed, so ordinary users cannot add anything any more (this step does not
+      # go through junctions); 3. links out again (whatever was planted between 1 and 2); 4. only then the recursive steps, which follow links.
+      $hasLinkTool = [bool](Get-Command Remove-HrLinks -ErrorAction SilentlyContinue)
+      $links = if ($hasLinkTool) { @(Remove-HrLinks $p) } else { @("$p (NUK U HOQ: mungon hr-links.ps1)") }
+      $grants = @('*S-1-5-18:(OI)(CI)F', '*S-1-5-32-544:(OI)(CI)F')
+      if ($owner) { $grants += "*$($owner):(OI)(CI)M" }
+      if ($p -eq $Root) { $grants += '*S-1-5-32-545:RX' }   # this folder only (no OI/CI): the others see the top list, nothing inside
+      & icacls.exe $p /inheritance:r /grant:r @grants /C /Q 2>&1 | Out-Null
+      if ($LASTEXITCODE -ne 0) { throw "icacls kodi $LASTEXITCODE" }
+      if ($hasLinkTool) { $links += @(Remove-HrLinks $p) }
+      foreach ($l in $links) { Warn "Lidhje brenda dosjes: $l" }
+      $safe = -not ($links | Where-Object { $_ -like '*(NUK U HOQ*' })
+      if ($safe) { & icacls.exe $p /remove:g @broad /T /C /Q 2>&1 | Out-Null }
+      if ($p -eq $Root) {
+        # The Public-desktop shortcut runs Dashboard.bat for every user (it asks for an administrator when the dashboard is off).
+        # (/remove:g above also took the top folder's own Users entry: it is given again, this folder only.)
+        & icacls.exe $p /grant '*S-1-5-32-545:RX' /C /Q 2>&1 | Out-Null
+        $bat = Join-Path $p 'Dashboard.bat'
+        if (Test-Path -LiteralPath $bat) { & icacls.exe $bat /grant '*S-1-5-32-545:RX' /C /Q 2>&1 | Out-Null }
+      }
+      if (-not $safe) { throw 'nje lidhje ose dosje nuk u hoq/lexua, prandaj lejet brenda saj nuk u ndryshuan; shiko rreshtat me larte' }
+      # A file owned by an ordinary user would let that user change its permissions again: everything belongs to Administrators.
+      # icacls /C answers 0 even when files failed, so the result is read back: "Failed processing N files" and the owner of the folder.
+      $out = (& icacls.exe $p /setowner '*S-1-5-32-544' /T /C /Q 2>&1 | Out-String)
+      $failed = if ($out -match 'Failed processing (\d+) files') { [int]$Matches[1] } else { 0 }
+      if ((Get-Acl -LiteralPath $p).GetOwner($sidType).Value -ne 'S-1-5-32-544' -or $failed -gt 0) { throw "pronari Administrators nuk u vendos ($failed skedare deshtuan; duhet Administrator)" }
+      Ok "Lejet e dosjes u mbyllen: $p"
+    } catch { Warn "Lejet e dosjes $p nuk u vendosen plotesisht ($($_.Exception.Message)); vazhdohet." }
+  }
+}
+
 function Refresh-Path {
   $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User')
 }

@@ -78,9 +78,29 @@ function Save-Keys {
     return $dest
 }
 
+# Links inside a folder (junctions, symbolic and hard links) are removed before takeown /R, icacls /T, robocopy /MIR and Remove-Item -Recurse:
+# they follow them, so a link an ordinary user planted (to C:\Windows\System32, say) would make this elevated uninstall change or delete files
+# outside HRSystem (security review 2026-11-18/19; Remove-HrLinks in hr-links.ps1, next to this script). Returns $true when it is safe to go on;
+# $false leaves the folder for the owner to delete by hand (a link that could not be removed, a folder itself a link, or hr-links.ps1 missing).
+$linksScript = Join-Path $PSScriptRoot 'hr-links.ps1'
+if (Test-Path -LiteralPath $linksScript) { . $linksScript }
+function Remove-Links([string]$path) {
+    if (-not (Test-Path -LiteralPath $path)) { return $true }
+    if ((Get-Item -LiteralPath $path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) {
+        try { [IO.Directory]::Delete($path, $false); Write-Host "U hoq lidhja: $path" -ForegroundColor Yellow } catch { }
+        return $false   # the folder itself was a link: nothing of the target is touched
+    }
+    if (-not (Get-Command Remove-HrLinks -ErrorAction SilentlyContinue)) { Write-Host "Mungon hr-links.ps1: $path nuk fshihet automatikisht, fshije me dore." -ForegroundColor Yellow; return $false }
+    $found = @(Remove-HrLinks $path)
+    foreach ($l in $found) { Write-Host "Lidhje: $l" -ForegroundColor Yellow }
+    if ($found | Where-Object { $_ -like '*(NUK U HOQ*' }) { Write-Host "$path nuk fshihet automatikisht (nje lidhje mbeti): fshije me dore." -ForegroundColor Yellow; return $false }
+    return $true
+}
+
 # Empties a folder by mirroring an empty one (also removes trees that Remove-Item cannot: long paths, node_modules), then removes it.
 function Wipe-Folder([string]$path) {
     if (-not (Test-Path -LiteralPath $path)) { return }
+    if (-not (Remove-Links $path)) { return }
     try {
         & takeown.exe /F $path /R /D Y 2>&1 | Out-Null
         & icacls.exe $path /reset /T /C 2>&1 | Out-Null
@@ -201,8 +221,14 @@ try {
     # runs from TEMP, ends every node/powershell process of this installation (not the window that shows this result) and tries again
     # for about 30 seconds.
     Step 'Folderi i aplikacionit'
-    Write-Host "$installRoot do te fshihet brenda disa sekondave." -ForegroundColor Yellow
+    # Links first: takeown /R, icacls /T, robocopy /MIR and Remove-Item -Recurse below would follow one out of the folder. When one stays,
+    # the cleanup still stops this installation's processes but leaves the folder for the owner.
+    $wipeOk = Remove-Links $installRoot
+    $wipeFlag = if ($wipeOk) { '$true' } else { '$false' }
+    if ($wipeOk) { Write-Host "$installRoot do te fshihet brenda disa sekondave." -ForegroundColor Yellow }
+    else { Write-Host "$installRoot nuk fshihet automatikisht (shiko rreshtat me larte): fshije me dore pasi te mbyllet kjo dritare." -ForegroundColor Yellow }
     $cleanup = @"
+`$wipe = $wipeFlag
 Set-Location `$env:TEMP
 for (`$i = 0; `$i -lt 15; `$i++) {
     Start-Sleep -Seconds 2
@@ -215,6 +241,7 @@ for (`$i = 0; `$i -lt 15; `$i++) {
             Where-Object { `$_.ExecutablePath -and `$_.ExecutablePath.StartsWith('$installRoot\tools\', [StringComparison]::OrdinalIgnoreCase) } |
             ForEach-Object { Stop-Process -Id `$_.ProcessId -Force -ErrorAction SilentlyContinue }
     } catch {}
+    if (-not `$wipe) { break }
     if (Test-Path -LiteralPath '$installRoot') {
         & takeown.exe /F '$installRoot' /R /D Y 2>&1 | Out-Null
         & icacls.exe '$installRoot' /reset /T /C 2>&1 | Out-Null
