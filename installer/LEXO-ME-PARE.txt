@@ -1,0 +1,26 @@
+HRSystem per Windows: nje setup, nje updater, nje importues SQL
+===============================================================
+
+1. INSTALIMI (nje here)
+   Kliko dy here Install.bat (hapet si Administrator). Tokenat (GitHub, MySQL, Cloudflare) kerkohen ne nje dritare Windows ku mund te ngjitesh me Ctrl+V.
+   Alternative per tokenin GitHub: krijo skedarin github-token.txt (me Notepad) ne te njejtin folder me Install.bat dhe ngjite aty; fshihet vete pasi ruhet. Ai instalon vete Node.js, Microsoft Visual C++ Runtime dhe MySQL nese mungojne, krijon databazen,
+   instalon aplikacionin dhe e nis vete me Windows; ne fund pret sa dashboard-i t'i kete gati mjetet e databazes (PHP + phpMyAdmin,
+   butoni "Hap databazen"). Pa internet ato instalohen me vone vete nga dashboard-i. Ne fund te pyet (mund t'i kalosh me Enter):
+     - Tunnel Token i Cloudflare: per ta hapur HRSystem nga interneti me adrese tende (nuk duhet vegel tjeter).
+     - GitHub token vetem-lexim: qe update.bat te marre vete versionin e ri nga GitHub.
+   Pas instalimit hapet http://localhost:3000/setup.
+
+2. PERDITESIMI (sa here ka version te ri)
+   update.bat            merr versionin e fundit nga GitHub dhe e instalon (backup i databazes, build, SQL i versionit,
+                         kontroll shendeti; nese versioni i ri nuk pergjigjet, kthehet i vjetri).
+   update.bat check      vetem tregon nese ka version te ri.
+   update.bat skedari.zip  instalon nje HRSystem-<x>.zip lokal (pa GitHub).
+   Ne fund shfaqet SUKSES ose GABIM; detajet jane te Updater.log.
+
+3. NJE SKEDAR SQL (kur ka ndryshime ne databaze)
+   sql-import.bat        hap nje dritare per te zgjedhur skedarin .sql (ose: sql-import.bat skedari.sql).
+                         Para se ta ekzekutoje, ben backup te databazes. Ne fund shfaqet SUKSES ose GABIM.
+   (update.bat i ekzekuton vete SQL-in e versionit te ri; sql-import.bat sherben per nje SQL tjeter.)
+
+Backup-et e databazes: C:\HRSystemData\Backups (14 te fundit). Log-et: C:\HRSystem\*.log
+Heqja: uninstall.bat

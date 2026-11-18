@@ -1,0 +1,12 @@
+# Setup/ on the working PC is a clone of HRSystem-Setup. These live here but belong elsewhere:
+# Claude Studio/ = clone of HRSystem-ReginaCenter (program + manual); its manager/ = clone of HRSystem-Dashboard
+/Claude Studio/
+# built zips, schemas, one-time SQL (kept as Releases of the repos)
+/Versions/
+/Clients/
+*.zip
+__pycache__/
+node_modules/
+.env
+.env.*
+setup-token.txt

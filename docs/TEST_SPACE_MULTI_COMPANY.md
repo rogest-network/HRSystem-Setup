@@ -1,0 +1,12 @@
+# Multi-company test space on the owner's PC (Setup only, not in any repo)
+
+A place to SEE how each company looks and works, with no connection to any repo (owner's order): Regina, Template and later other companies side by side, all running the
+code in `Source/` as it is now. Updating the test space (`test-env.bat update all`) rebuilds from `Source/` and never touches GitHub; "update Regina" in the sense of a
+release is a separate act and does not involve this space. Completely apart from the real install (`C:\HRSystem`, its MySQL, its tunnel, ports 3000/3307): everything is in `C:\HRTest`
+with its OWN MySQL (port 3398, root password `x`, localhost only). Each company = folder `C:\HRTest\<name>` (+ `<name>Data` for backups), port from 3101,
+database `hrtest_<name>`, own data. Every company's `.env` lists all companies (`HRSYSTEM_COMPANIES`), so the login page shows the *Kompania* selector.
+- `test-env.bat add <name> local` (a new company; `add <name> <owner/repo> [stable|test]` still exists for a repo-fed one); open `http://localhost:<port>/setup` with the SETUP_TOKEN in `C:\HRTest\<name>\.env` to create the owner.
+- `update <name|all>` (rebuilds from `Source/`, version shown as `<version>-test<yyMMddHHmm>`), `start|stop [name|all]`, `list`, `remove <name>`. Companies do not start by themselves after a restart of the PC: run `test-env.bat start` (or `panel`).
+- **Panel (the "dashboard" of the test space):** `test-env.bat panel` starts every company and opens `http://localhost:3600` (`installer/test-env-panel.mjs`, local only): a card per company with a green/grey dot, **Hyr** (opens it), Nise/Ndale, and "Perditeso nga kodi". Separate from the installed dashboard (`C:\HRSystem\manager`), which is untouched.
+- Registry: `C:\HRTest\companies.json`. Scripts are in `Setup/` only (not in any repo). Today: template (3101) and regina (3102), both local code.
+- **Test data:** `test-env.bat seed <name|all>` (also done by `add`; button "Ringarko te dhenat testuese" in the panel) empties the company's test database and fills it with `installer/test-env-seed.mjs`: 520 staff/cashiers + owner `pronari`, managers `menaxher1..`, 10 stores (Regina) or 8 (Template), groups, positions, ~52 days of attendance (~20k rows), absences, late/early, overtime, leave (past/future/pending), requests, balances, remarks, shift swaps, announcements. Every password is `testtest123`. Test DB only.
