@@ -144,7 +144,7 @@ function Test-Location {
     $f = $txtFolder.Text.Trim().TrimEnd('\')
     if (-not $f) { return 'Shkruani dosjen e instalimit.' }
     if ($f -notmatch '^[A-Za-z]:\\[A-Za-z0-9_\-\.\\]+$' -or $f -match '\.\.') { return 'Dosja duhet të jetë një rrugë si D:\HRSystem: vetëm shkronja, numra, _ dhe -, pa hapësira.' }
-    if ($f -match '^[A-Za-z]:\\(Windows|Program Files|Program Files \(x86\)|Users|ProgramData)(\\|$)') { return 'Instalimi nuk lejohet te Windows, Program Files, ProgramData ose Users.' }
+    if ($f -match '^[A-Za-z]:\\(Windows|Program Files|Program Files \(x86\)|Users)(\\|$)') { return 'Instalimi nuk lejohet te Windows, Program Files ose Users.' }
     $drive = $null
     try { $drive = New-Object System.IO.DriveInfo($f.Substring(0, 2)) } catch { }
     if (-not $drive -or -not $drive.IsReady) { return 'Disku ' + $f.Substring(0, 2) + ' nuk është i gatshëm.' }
@@ -429,7 +429,7 @@ $stages = @(
     @('Shkarkimi i aplikacionit', 8, 'Shkarkimi i aplikacionit'), @('Node.js', 14, 'Node.js'), @('Visual C++', 18, 'Microsoft Visual C++ Runtime'), @('MySQL binaries', 28, 'MySQL'),
     @('MySQL HRSystem configuration', 40, 'Konfigurimi i MySQL'), @('Database + schema', 50, 'Databaza dhe skema'), @('Skedaret e HRSystem', 58, 'Skedarët e aplikacionit'),
     @('Paketat + build', 62, 'Paketat dhe build (disa minuta)'), @('Windows auto-start', 86, 'Nisja me Windows'), @('Health check', 90, 'Kontrolli i shëndetit'),
-    @('Rrjeti', 92, 'Rrjeti'), @('Perditesimet nga GitHub', 93, 'Përditësimet'), @('Lejet e folderave', 94, 'Lejet e dosjeve (mund të zgjasë disa minuta)'), @('Mjetet e databazes', 95, 'Mjetet e databazës (PHP, phpMyAdmin)'), @('READY', 100, 'Përfundim')
+    @('Rrjeti', 92, 'Rrjeti'), @('Perditesimet nga GitHub', 93, 'Përditësimet'), @('Mjetet e databazes', 94, 'Mjetet e databazës (PHP, phpMyAdmin)'), @('READY', 100, 'Përfundim')
 )
 $script:Pct = 2; $script:Label = 'Po nis...'; $script:BuildStarted = $null; $script:ToolsStarted = $null
 function Add-LogText([string]$text) {
@@ -447,7 +447,7 @@ function Update-Progress {
     $pct = $script:Pct
     if ($script:Label -like 'Paketat dhe build*' -and $script:BuildStarted) { $pct = [math]::Min(84, 62 + [int](((Get-Date) - $script:BuildStarted).TotalSeconds / 7)) }
     # the dashboard downloads PHP + phpMyAdmin while the installer waits (up to about 4 minutes): the bar creeps here too
-    if ($script:Label -like 'Mjetet e databaz*' -and $script:ToolsStarted) { $pct = [math]::Min(97, 95 + [int](((Get-Date) - $script:ToolsStarted).TotalSeconds / 60)) }
+    if ($script:Label -like 'Mjetet e databaz*' -and $script:ToolsStarted) { $pct = [math]::Min(97, 94 + [int](((Get-Date) - $script:ToolsStarted).TotalSeconds / 60)) }
     $progressFill.Width = [int](490 * [math]::Max(0, [math]::Min(100, $pct)) / 100)
     $lblStep.Text = $script:Label
     $lblPct.Text = $pct.ToString() + '%'

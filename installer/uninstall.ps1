@@ -78,39 +78,18 @@ function Save-Keys {
     return $dest
 }
 
-# Before takeown /R, icacls /T, robocopy /MIR and Remove-Item -Recurse (they follow junctions, symbolic and hard links, so a link an ordinary user
-# planted, to C:\Windows\System32 say, would make this elevated uninstall change or delete files outside HRSystem) the folder is closed with
-# Protect-HrTree (hr-links.ps1, next to this script): links removed, no write left for ordinary users anywhere inside, so nothing new can be
-# planted while the deletion runs (security review 2026-11-18/19). Returns $true when it is safe to go on; $false leaves the folder for the owner
-# to delete by hand (a link or item that could not be handled, a folder itself a link, or hr-links.ps1 missing).
-$linksScript = Join-Path $PSScriptRoot 'hr-links.ps1'
-if (Test-Path -LiteralPath $linksScript) { . $linksScript }
-function Remove-Links([string]$path, [switch]$KeepHardLinks) {
-    if (-not (Test-Path -LiteralPath $path)) { return $true }
-    if ((Get-Item -LiteralPath $path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) {
-        try { [IO.Directory]::Delete($path, $false); Write-Host "U hoq lidhja: $path" -ForegroundColor Yellow } catch { }
-        return $false   # the folder itself was a link: nothing of the target is touched
-    }
-    if (-not (Get-Command Protect-HrTree -ErrorAction SilentlyContinue)) { Write-Host "Mungon hr-links.ps1: $path nuk fshihet automatikisht, fshije me dore." -ForegroundColor Yellow; return $false }
-    $r = Protect-HrTree -Path $path -OwnerSid ([Security.Principal.WindowsIdentity]::GetCurrent().User.Value) -KeepHardLinks:$KeepHardLinks
-    foreach ($n in $r.Notes) { Write-Host "  $n" -ForegroundColor Yellow }
-    if (-not $r.Ok) { Write-Host "$path nuk fshihet automatikisht (shiko rreshtat me larte): fshije me dore." -ForegroundColor Yellow; return $false }
-    return $true
-}
-
 # Empties a folder by mirroring an empty one (also removes trees that Remove-Item cannot: long paths, node_modules), then removes it.
 function Wipe-Folder([string]$path) {
     if (-not (Test-Path -LiteralPath $path)) { return }
-    if (-not (Remove-Links $path)) { return }
     try {
-        # No takeown /R or icacls /reset here: Protect-HrTree already gave Administrators every item, and /reset would open the folder again
-        # to ordinary users (inheritance from C:\) before the deletion. /XJ: robocopy never follows a junction.
+        & takeown.exe /F $path /R /D Y 2>&1 | Out-Null
+        & icacls.exe $path /reset /T /C 2>&1 | Out-Null
+        & icacls.exe $path /grant '*S-1-5-32-544:(OI)(CI)F' /T /C 2>&1 | Out-Null
         $emptyDir = Join-Path $env:TEMP 'hrsystem-empty'
         New-Item -ItemType Directory -Force -Path $emptyDir | Out-Null
-        & robocopy.exe $emptyDir $path /MIR /XJ /R:0 /W:0 /NFL /NDL /NJH /NJS 2>&1 | Out-Null
+        & robocopy.exe $emptyDir $path /MIR /R:0 /W:0 /NFL /NDL /NJH /NJS 2>&1 | Out-Null
     } catch { }
-    # .NET Framework's recursive delete removes a junction or symbolic link without entering it; PowerShell 5.1's Remove-Item -Recurse enters it.
-    try { [IO.Directory]::Delete($path, $true) } catch { }
+    Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 try {
@@ -222,14 +201,8 @@ try {
     # runs from TEMP, ends every node/powershell process of this installation (not the window that shows this result) and tries again
     # for about 30 seconds.
     Step 'Folderi i aplikacionit'
-    # Links first: takeown /R, icacls /T, robocopy /MIR and Remove-Item -Recurse below would follow one out of the folder. When one stays,
-    # the cleanup still stops this installation's processes but leaves the folder for the owner.
-    $wipeOk = Remove-Links $installRoot
-    $wipeFlag = if ($wipeOk) { '$true' } else { '$false' }
-    if ($wipeOk) { Write-Host "$installRoot do te fshihet brenda disa sekondave." -ForegroundColor Yellow }
-    else { Write-Host "$installRoot nuk fshihet automatikisht (shiko rreshtat me larte): fshije me dore pasi te mbyllet kjo dritare." -ForegroundColor Yellow }
+    Write-Host "$installRoot do te fshihet brenda disa sekondave." -ForegroundColor Yellow
     $cleanup = @"
-`$wipe = $wipeFlag
 Set-Location `$env:TEMP
 for (`$i = 0; `$i -lt 15; `$i++) {
     Start-Sleep -Seconds 2
@@ -242,13 +215,15 @@ for (`$i = 0; `$i -lt 15; `$i++) {
             Where-Object { `$_.ExecutablePath -and `$_.ExecutablePath.StartsWith('$installRoot\tools\', [StringComparison]::OrdinalIgnoreCase) } |
             ForEach-Object { Stop-Process -Id `$_.ProcessId -Force -ErrorAction SilentlyContinue }
     } catch {}
-    if (-not `$wipe) { break }
     if (Test-Path -LiteralPath '$installRoot') {
+        & takeown.exe /F '$installRoot' /R /D Y 2>&1 | Out-Null
+        & icacls.exe '$installRoot' /reset /T /C 2>&1 | Out-Null
+        & icacls.exe '$installRoot' /grant '*S-1-5-32-544:(OI)(CI)F' /T /C 2>&1 | Out-Null
         `$empty = Join-Path `$env:TEMP 'hrsystem-empty'
         New-Item -ItemType Directory -Force -Path `$empty | Out-Null
-        & robocopy.exe `$empty '$installRoot' /MIR /XJ /R:0 /W:0 /NFL /NDL /NJH /NJS 2>&1 | Out-Null
+        & robocopy.exe `$empty '$installRoot' /MIR /R:0 /W:0 /NFL /NDL /NJH /NJS 2>&1 | Out-Null
     }
-    try { [IO.Directory]::Delete('$installRoot', `$true) } catch { }   # removes a link without entering it (not Remove-Item -Recurse)
+    Remove-Item -LiteralPath '$installRoot' -Recurse -Force -ErrorAction SilentlyContinue
     if (-not (Test-Path -LiteralPath '$installRoot')) { break }
 }
 Remove-Item -LiteralPath (Join-Path `$env:TEMP 'hrsystem-empty') -Recurse -Force -ErrorAction SilentlyContinue

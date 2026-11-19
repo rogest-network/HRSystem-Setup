@@ -85,35 +85,6 @@ All of them open as Administrator and end with **SUKSES** or **GABIM** (details 
 (as SYSTEM); the launcher starts the release named in `current.txt` and starts it again if it stops. MySQL is the service
 `HRSystemMySQL` (a free port from 3307). `github.token` is encrypted with Windows DPAPI (this machine) and readable by administrators only.
 
-## Folder permissions (security review, 2026-11-18)
-A folder made under `C:\` inherits "Authenticated Users: Modify", and the app runs from `C:\HRSystem` as SYSTEM, so before this any ordinary
-user of a shared PC could change its scripts and run code as SYSTEM. At the end of the setup (stage "Lejet e folderave") `Lock-HrFolders`
-(`installer/hr-common.ps1`) closes both folders:
-
-| Who | `C:\HRSystem` | `C:\HRSystemData` |
-|---|---|---|
-| SYSTEM (the app, MySQL), Administrators (elevated: dashboard, updater, uninstall) | Full | Full |
-| The account that ran the setup (the owner; the dashboard task runs as him) | Modify: Explorer, Notepad and the dashboard's open-folder buttons work with no "access denied" | Modify |
-| Every other user of the PC | only the list of the top folder and `Dashboard.bat` (the Public-desktop shortcut); no logs, no `dashboard.key` | nothing (database files and backups) |
-
-`.env`, `HRSystem-Keys.txt`, `github.token` and `tools\phpmyadmin-data` keep their own closed permissions (SYSTEM + Administrators).
-How (`Protect-HrTree` in `installer/hr-links.ps1`; no `icacls /T`, `takeown /R` or `robocopy /MIR` on these folders any more, because they
-follow junctions, symbolic links and hard links out of the folder): 1. every link inside is removed (only the link); 2. the top folder gets its
-exact permissions; 3. one walk, top down, that never enters a link: each folder is closed (owner, explicit entries of anyone else removed)
-before it is read, links found are removed, files are closed, and an item Administrators cannot open is taken over by itself (`takeown /A`
-on that item only). A finished lock writes `.hr-locked` in the folder; a lock with any problem prints GABIM in red and writes nothing, so the
-next run tries again. The setup does the same at its START on an old folder (`Unlock-Folder`), and the uninstall before it deletes anything
-(a folder it cannot close completely is left for the owner; `Uninstall.bat` copies `hr-links.ps1` to TEMP next to the uninstall script).
-Deny entries are removed (HRSystem sets none). While the walk runs (and only then) SeBackupPrivilege is on, so an elevated run reads the
-link count of every file whatever its entries say; it is switched off before anything else starts. The uninstall deletes with robocopy /XJ
-and .NET `Directory.Delete`, which never enter a link (never `Remove-Item -Recurse`). In the data folder a hard-linked file (maybe a database file) is reported and nothing is
-changed; the setup then uses a fresh MySQL data folder instead of cleaning the old one with recursive tools. Residual: a link planted in the few milliseconds between steps 1 and 2, or in a
-folder that still had an ordinary user's own explicit entry before the walk reached it, can receive the top folder's inherited entries.
-`updater.ps1` repeats the lock when it is missing, but an installed updater is never replaced by an update, so an install made with a setup
-older than 2026-11-18 is closed only by running the new setup again over it. A second Windows account of the owner is not given Modify: he
-uses the installing account or opens things as Administrator. `Dashboard.bat` falls back to `http://127.0.0.1:3500` when it cannot read
-`dashboard-url.txt`, and never starts itself again from the same folder.
-
 ## Database tools: Visual C++ runtime, PHP, phpMyAdmin (owner, 2026-11-12: "installin me e pas PHP krejt mirë në rregull")
 The dashboard's button "Hap databazën (phpMyAdmin)" needs PHP for Windows and phpMyAdmin in `<install>\tools\{php, phpmyadmin, phpmyadmin-data}`.
 **The dashboard is the only downloader** (`pmaInstall` / `pmaEnsure` in `manager/server.mjs`, both downloads SHA-256 checked; 30 s after it starts and

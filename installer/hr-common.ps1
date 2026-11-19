@@ -25,59 +25,6 @@ function Is-Admin {
   return (New-Object Security.Principal.WindowsPrincipal($id)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
-# ---- Folder permissions (security review, 2026-11-18) ----
-# The application runs as SYSTEM (task HRSystem -> start-hrsystem.ps1 -> node releases\<v>\server.mjs) and the dashboard elevated, both from the
-# install folder. A folder made under C:\ inherits "Authenticated Users: Modify", so any ordinary user of a shared PC could change those files and
-# run code as SYSTEM. Lock-HrFolders closes that: no inheritance from C:\; SYSTEM and Administrators full control; the owner's own account (the
-# administrator who installed = the user of the dashboard task) Modify, so Explorer, Notepad and the dashboard's "Hap" buttons keep working for him
-# without "access denied" (owner, 2026-10-21: an earlier lock that denied even him was removed); every other user of the PC may only list the top
-# of the install folder and start Dashboard.bat (the Public-desktop shortcut): no logs, no dashboard.key, nothing of the data folder (the database
-# files and the backups hold every employee's data). .env, the key file, github.token and tools\phpmyadmin-data keep their own closed permissions
-# (no inheritance, so this does not open them). Another Windows account of the owner gets no Modify: he uses the installing account or elevation.
-# A failure is shown in red but never stops the install or the update. NOTE: the installed updater.ps1/hr-common.ps1 are never replaced by an
-# update, so an install made before this change is closed only by running the new setup again (or a later dashboard step, on the owner's word).
-
-# The work itself (links out, top folder, a walk that never follows a link): Protect-HrTree in hr-links.ps1, copied next to this file by the setup,
-# pack.py and test-env.ps1. Without it nothing is changed and the lock says so.
-$hrLinksScript = Join-Path $PSScriptRoot 'hr-links.ps1'
-if (Test-Path -LiteralPath $hrLinksScript) { . $hrLinksScript }
-function Get-HrOwnerSid {
-  # The account of the dashboard task (the administrator who installed), else the account running this script when it is not SYSTEM.
-  try {
-    $t = Get-ScheduledTask -TaskName "$($script:TaskName)-Dashboard" -ErrorAction Stop
-    $u = [string]$t.Principal.UserId
-    if ($u) { return ([Security.Principal.NTAccount]$u).Translate([Security.Principal.SecurityIdentifier]).Value }
-  } catch { }
-  $me = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-  if ($me -ne 'S-1-5-18') { return $me }
-  return $null
-}
-# A finished lock leaves the file .hr-locked in the folder (written only when every item was closed); the updater skips a folder that has it.
-function Lock-HrFolders([string]$Root = $script:Root, [string]$Data = $script:DataRoot, [string]$OwnerSid = '', [switch]$Force) {
-  $ErrorActionPreference = 'Continue'
-  if (-not (Get-Command Protect-HrTree -ErrorAction SilentlyContinue)) { Write-Host 'GABIM: mungon hr-links.ps1, lejet e dosjeve nuk u mbyllen.' -ForegroundColor Red; return }
-  $owner = if ($OwnerSid) { $OwnerSid } else { Get-HrOwnerSid }   # the installer passes its own account: no name lookup
-  foreach ($spec in @(@{ Path = $Root; Top = $true }, @{ Path = $Data; Top = $false })) {
-    $p = $spec.Path
-    if (-not $p -or -not (Test-Path -LiteralPath $p)) { continue }
-    try {
-      $marker = Join-Path $p '.hr-locked'
-      if (-not $Force -and (Test-Path -LiteralPath $marker) -and (Get-Acl -LiteralPath $p).AreAccessRulesProtected) { continue }
-      Write-Host "Po mbyllen lejet e $p (heren e pare mund te zgjase disa minuta)..."
-      $files = if ($spec.Top) { @('Dashboard.bat') } else { @() }   # the Public-desktop shortcut runs it for every user
-      # In the data folder a hard-linked file may be a database file: reported, never deleted (-KeepHardLinks).
-      $r = Protect-HrTree -Path $p -OwnerSid $owner -UsersTop:$spec.Top -UsersFiles $files -KeepHardLinks:(-not $spec.Top)
-      foreach ($n in $r.Notes) { Warn "  $n" }
-      if ($r.Ok) {
-        Set-Content -LiteralPath $marker -Value "HRSystem folder lock v2 $(Get-Date -Format s)" -Encoding ascii
-        Ok "Lejet e dosjes u mbyllen: $p"
-      } else {
-        Write-Host "GABIM: lejet e dosjes $p nuk u mbyllen plotesisht (shiko rreshtat me larte). Hape perseri setup-in ose update.bat si Administrator." -ForegroundColor Red
-      }
-    } catch { Write-Host "GABIM: lejet e dosjes $p nuk u mbyllen ($($_.Exception.Message))." -ForegroundColor Red }
-  }
-}
-
 function Refresh-Path {
   $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User')
 }

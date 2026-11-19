@@ -19,9 +19,6 @@ try {
   $installed = Get-InstalledVersion
   $installedVersion = $installed -replace '-b\d+$', ''   # a rebuild of the same version is installed as <version>-b2, -b3 ...
   if (-not $installed) { throw "HRSystem nuk eshte instaluar ne $($script:Root) (mungon current.txt)." }
-  # Keeps the install closed (skipped when it already is). NOTE: an installed updater.ps1 is never replaced by an update, so this runs only in
-  # installs made with a setup from 2026-11-18 on (and the test space); older installs are closed by running the new setup again.
-  Lock-HrFolders
   $cfg = Use-HrEnv
   $port = [int]$cfg['PORT']
   if (-not $port) { $port = 3000 }
