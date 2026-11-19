@@ -109,7 +109,8 @@ function Wipe-Folder([string]$path) {
         New-Item -ItemType Directory -Force -Path $emptyDir | Out-Null
         & robocopy.exe $emptyDir $path /MIR /XJ /R:0 /W:0 /NFL /NDL /NJH /NJS 2>&1 | Out-Null
     } catch { }
-    Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction SilentlyContinue
+    # .NET Framework's recursive delete removes a junction or symbolic link without entering it; PowerShell 5.1's Remove-Item -Recurse enters it.
+    try { [IO.Directory]::Delete($path, $true) } catch { }
 }
 
 try {
@@ -247,7 +248,7 @@ for (`$i = 0; `$i -lt 15; `$i++) {
         New-Item -ItemType Directory -Force -Path `$empty | Out-Null
         & robocopy.exe `$empty '$installRoot' /MIR /XJ /R:0 /W:0 /NFL /NDL /NJH /NJS 2>&1 | Out-Null
     }
-    Remove-Item -LiteralPath '$installRoot' -Recurse -Force -ErrorAction SilentlyContinue
+    try { [IO.Directory]::Delete('$installRoot', `$true) } catch { }   # removes a link without entering it (not Remove-Item -Recurse)
     if (-not (Test-Path -LiteralPath '$installRoot')) { break }
 }
 Remove-Item -LiteralPath (Join-Path `$env:TEMP 'hrsystem-empty') -Recurse -Force -ErrorAction SilentlyContinue

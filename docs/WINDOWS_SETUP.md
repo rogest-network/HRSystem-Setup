@@ -104,7 +104,9 @@ before it is read, links found are removed, files are closed, and an item Admini
 on that item only). A finished lock writes `.hr-locked` in the folder; a lock with any problem prints GABIM in red and writes nothing, so the
 next run tries again. The setup does the same at its START on an old folder (`Unlock-Folder`), and the uninstall before it deletes anything
 (a folder it cannot close completely is left for the owner; `Uninstall.bat` copies `hr-links.ps1` to TEMP next to the uninstall script).
-Deny entries are removed (HRSystem sets none). In the data folder a hard-linked file (maybe a database file) is reported and nothing is
+Deny entries are removed (HRSystem sets none). While the walk runs (and only then) SeBackupPrivilege is on, so an elevated run reads the
+link count of every file whatever its entries say; it is switched off before anything else starts. The uninstall deletes with robocopy /XJ
+and .NET `Directory.Delete`, which never enter a link (never `Remove-Item -Recurse`). In the data folder a hard-linked file (maybe a database file) is reported and nothing is
 changed; the setup then uses a fresh MySQL data folder instead of cleaning the old one with recursive tools. Residual: a link planted in the few milliseconds between steps 1 and 2, or in a
 folder that still had an ordinary user's own explicit entry before the walk reached it, can receive the top folder's inherited entries.
 `updater.ps1` repeats the lock when it is missing, but an installed updater is never replaced by an update, so an install made with a setup

@@ -233,7 +233,7 @@ try {
 
     Banner 'MySQL HRSystem configuration'
     New-Item -ItemType Directory -Force -Path $dataRoot | Out-Null
-    Unlock-Folder $dataRoot
+    [void](Unlock-Folder $dataRoot -KeepHardLinks)
 
     $existingRootPassword = Read-KeyFileValue $keyFile 'MYSQL_ROOT_PASSWORD'
     $savedPort = Read-KeyFileValue $keyFile 'DB_PORT'
@@ -295,7 +295,7 @@ try {
     }
 
     New-Item -ItemType Directory -Force -Path $mysqlData | Out-Null
-    Unlock-Folder $mysqlData
+    [void](Unlock-Folder $mysqlData -KeepHardLinks)
 
     # Keep MySQL's own error log inside the writable data folder.
     $mysqlLog = Join-Path $mysqlData 'mysql-error.log'

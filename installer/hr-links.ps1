@@ -13,23 +13,50 @@
 # Residual (documented): a link planted in the few milliseconds between steps 1 and 2, or inside a folder that still had an ordinary user's own
 # explicit entry while the walk had not reached it, can still receive the top folder's inherited entries: an outside file reached through such a
 # hard link gets its inherited permissions REPLACED by HRSystem's (other users may lose access to that one file); nothing is deleted or taken over
-# through it. Handles a user's process opened BEFORE the lock keep their access until that process closes them (sign-out or restart).
+# through it by the lock. Handles a user's process opened BEFORE the lock keep their access until that process closes them (sign-out or
+# restart): such a process could still add a link afterwards, so the uninstall deletes with robocopy /XJ and .NET Directory.Delete, which
+# remove a link without entering it (never Remove-Item -Recurse).
 
 # Add-Type can be blocked (AppLocker, Constrained Language): then nothing here runs a step and Protect-HrTree answers "not Ok" (never a crash
 # of the setup or the updater that loaded this file).
-if (-not ('HrLinkInfo' -as [type])) { try {
+if (-not ('HrFsInfo' -as [type])) { try {
   Add-Type -ErrorAction Stop -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
-public static class HrLinkInfo {
+public static class HrFsInfo {
   [StructLayout(LayoutKind.Sequential, Pack = 4)]   // BY_HANDLE_FILE_INFORMATION: FILETIMEs are two DWORDs, no 8-byte alignment
   struct BHFI { public uint Attr; public long Created, Accessed, Written; public uint Volume, SizeHigh, SizeLow, Links, IndexHigh, IndexLow; }
   [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
   static extern SafeFileHandle CreateFileW(string name, uint access, uint share, IntPtr security, uint disposition, uint flags, IntPtr template);
   [DllImport("kernel32.dll", SetLastError = true)]
   static extern bool GetFileInformationByHandle(SafeFileHandle handle, out BHFI info);
-  // The number of names (hard links) of a file, -1 when it cannot be read. Opened for attributes only, without following a reparse point.
+  [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
+  [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
+  [DllImport("advapi32.dll", SetLastError = true)]
+  static extern bool OpenProcessToken(IntPtr process, uint access, out IntPtr token);
+  [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+  static extern bool LookupPrivilegeValueW(string system, string name, out long luid);
+  [StructLayout(LayoutKind.Sequential, Pack = 4)]   // TOKEN_PRIVILEGES with one LUID_AND_ATTRIBUTES
+  struct TP { public uint Count; public long Luid; public uint Attributes; }
+  [DllImport("advapi32.dll", SetLastError = true)]
+  static extern bool AdjustTokenPrivileges(IntPtr token, bool disableAll, ref TP state, uint length, IntPtr previous, IntPtr returned);
+  // Turns on one privilege the process already holds (an elevated administrator holds SeBackup/SeRestore/SeTakeOwnership); false when not held.
+  public static bool Enable(string name) { return Set(name, true); }
+  public static bool Disable(string name) { return Set(name, false); }
+  static bool Set(string name, bool on) {
+    IntPtr token;
+    if (!OpenProcessToken(GetCurrentProcess(), 0x0020 | 0x0008, out token)) return false;
+    try {
+      long luid;
+      if (!LookupPrivilegeValueW(null, name, out luid)) return false;
+      TP tp = new TP(); tp.Count = 1; tp.Luid = luid; tp.Attributes = on ? 2u : 0u;
+      if (!AdjustTokenPrivileges(token, false, ref tp, 0, IntPtr.Zero, IntPtr.Zero)) return false;
+      return Marshal.GetLastWin32Error() == 0;
+    } finally { CloseHandle(token); }
+  }
+  // The number of names (hard links) of a file, -1 when it cannot be read. Opened for attributes only, without following a reparse point,
+  // with backup semantics: with SeBackupPrivilege on (elevated), no Deny entry can hide the answer.
   public static int Links(string path) {
     string p = path.StartsWith(@"\\") ? path : @"\\?\" + path;
     using (SafeFileHandle h = CreateFileW(p, 0x80, 7, IntPtr.Zero, 3, 0x02000000 | 0x00200000, IntPtr.Zero)) {
@@ -59,7 +86,7 @@ function Remove-HrLinkItem([IO.FileSystemInfo]$Item, [switch]$KeepHardLinks) {
     try { if ($isDir) { [IO.Directory]::Delete($Item.FullName, $false) } else { [IO.File]::Delete($Item.FullName) }; return "$($Item.FullName) (lidhje, u hoq)" }
     catch { return "$($Item.FullName) (NUK U HOQ: $($_.Exception.Message))" }
   }
-  if (-not $isDir -and [HrLinkInfo]::Links($Item.FullName) -gt 1) {
+  if (-not $isDir -and [HrFsInfo]::Links($Item.FullName) -gt 1) {
     if ($KeepHardLinks) { return "$($Item.FullName) (NUK U HOQ: hard link, skedari ka edhe nje emer tjeter; kontrolloje me dore)" }
     # A second name of a file that may live outside: deleting this name leaves the other one and the file untouched.
     try { [IO.File]::Delete($Item.FullName); return "$($Item.FullName) (hard link, u hoq)" }
@@ -72,19 +99,20 @@ function Remove-HrLinkItem([IO.FileSystemInfo]$Item, [switch]$KeepHardLinks) {
 function Remove-HrLinks([string]$Path, [switch]$KeepHardLinks) {
   $found = @()
   if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return $found }
-  if (-not ('HrLinkInfo' -as [type])) { return @("$Path (NUK U HOQ: Add-Type u bllokua ne kete kompjuter)") }
+  if (-not ('HrFsInfo' -as [type])) { return @("$Path (NUK U HOQ: Add-Type u bllokua ne kete kompjuter)") }
   $queue = New-Object 'System.Collections.Generic.Queue[string]'
   $queue.Enqueue($Path)
   while ($queue.Count -gt 0) {
     $dir = $queue.Dequeue()
     $di = New-Object IO.DirectoryInfo($dir)
     $items = $null
-    # A folder Administrators cannot read may hide a link: taken over (that folder only) and read again.
-    try { $items = $di.GetFileSystemInfos() } catch { Grant-HrAdminAccess $dir; try { $items = $di.GetFileSystemInfos() } catch { $found += "$dir (NUK U HOQ: dosja nuk u lexua)"; continue } }
+    # A folder that cannot be read may hide a link. It is NOT taken over here: in step 1 the tree is still open, and its owner could swap it for
+    # a junction between the failed read and takeown (which follows it). Reported, and the lock stops.
+    try { $items = $di.GetFileSystemInfos() } catch { $found += "$dir (NUK U HOQ: dosja nuk u lexua)"; continue }
     foreach ($it in $items) {
       # A file whose number of names cannot be read may be a hard link: never taken over (takeown would change the owner of the linked file
       # outside), only reported. Reading it needs only the right to list the folder, which Administrators have here, so this should not happen.
-      if (-not ($it -is [IO.DirectoryInfo]) -and -not (Test-HrLink $it) -and [HrLinkInfo]::Links($it.FullName) -lt 0) {
+      if (-not ($it -is [IO.DirectoryInfo]) -and -not (Test-HrLink $it) -and [HrFsInfo]::Links($it.FullName) -lt 0) {
         $found += "$($it.FullName) (NUK U HOQ: skedari nuk u kontrollua)"; continue
       }
       $note = Remove-HrLinkItem $it -KeepHardLinks:$KeepHardLinks
@@ -141,7 +169,16 @@ function Set-HrItemSecurity([IO.FileSystemInfo]$Item, [string]$OwnerSid, [switch
 function Protect-HrTree([string]$Path, [string]$OwnerSid = '', [switch]$UsersTop, [string[]]$UsersFiles = @(), [switch]$KeepHardLinks) {
   $res = [pscustomobject]@{ Ok = $true; Notes = (New-Object 'System.Collections.Generic.List[string]') }
   if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return $res }
-  if (-not ('HrLinkInfo' -as [type])) { $res.Ok = $false; $res.Notes.Add("$Path (NUK U MBYLL: Add-Type u bllokua ne kete kompjuter)"); return $res }
+  if (-not ('HrFsInfo' -as [type])) { $res.Ok = $false; $res.Notes.Add("$Path (NUK U MBYLL: Add-Type u bllokua ne kete kompjuter)"); return $res }
+  # Elevated: SeBackupPrivilege lets the link count of every file be read whatever its entries say (a file hidden from Administrators would
+  # otherwise stop the lock for good). Only this privilege, and only while this runs: programs started later (npm, node, the dashboard) must
+  # not inherit it. Not elevated it stays off and a hidden item stops the lock (fail safe).
+  $backupOn = [HrFsInfo]::Enable('SeBackupPrivilege')
+  try { return (Protect-HrTreeWalk -Path $Path -OwnerSid $OwnerSid -UsersTop:$UsersTop -UsersFiles $UsersFiles -KeepHardLinks:$KeepHardLinks -Result $res) }
+  finally { if ($backupOn) { [void][HrFsInfo]::Disable('SeBackupPrivilege') } }
+}
+function Protect-HrTreeWalk([string]$Path, [string]$OwnerSid, [switch]$UsersTop, [string[]]$UsersFiles, [switch]$KeepHardLinks, $Result) {
+  $res = $Result
   $top = New-Object IO.DirectoryInfo($Path)
   if (Test-HrLink $top) { $res.Ok = $false; $res.Notes.Add("$Path (NUK U MBYLL: dosja vete eshte lidhje drejt nje vendi tjeter)"); return $res }
 
@@ -189,7 +226,7 @@ function Protect-HrTree([string]$Path, [string]$OwnerSid = '', [switch]$UsersTop
       $note = Remove-HrLinkItem $it -KeepHardLinks:$KeepHardLinks
       if ($note) { $res.Notes.Add($note); if ($note -like '*(NUK U HOQ*') { $res.Ok = $false }; continue }
       $isDir = $it -is [IO.DirectoryInfo]
-      if (-not $isDir -and [HrLinkInfo]::Links($it.FullName) -lt 0) {
+      if (-not $isDir -and [HrFsInfo]::Links($it.FullName) -lt 0) {
         # never taken over: it may be a hard link and takeown would change the linked file outside
         $res.Ok = $false; $res.Notes.Add("$($it.FullName) (NUK U KONTROLLUA)"); continue
       }
